@@ -6,16 +6,21 @@ import com.banking.transaction.service.dto.TransferRequest;
 import com.banking.transaction.service.entity.Transaction;
 import com.banking.transaction.service.entity.TransactionStatus;
 import com.banking.transaction.service.entity.TransactionType;
+import com.banking.transaction.service.event.TransactionCompletedEvent;
 import com.banking.transaction.service.event.TransactionInitiatedEvent;
 import com.banking.transaction.service.repository.TransactionRepository;
 import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 
+import java.time.LocalDateTime;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 @Service
@@ -23,15 +28,19 @@ import java.util.stream.Collectors;
 @Slf4j
 public class TransactionServiceImpl implements TransactionService{
 
+
     private  final AccountServiceClient accountServiceClient;
 
     private final TransactionRepository transactionRepository;
 
     private final KafkaTemplate<String,Object> kafkaTemplate;
 
+    private  final RedisTemplate<String,Object> redisTemplate;
+
     private static final String TRANSACTION_INITIARED_TOPIC="transaction.initialed";
     private static  final String TRANSACTION_COMPLETED_TOPIC="transaction.completed";
     private static  final String TRANSACTION_REFUNDED_TOPIC="transaction.refunded";
+    private static final String FRAUD_DETECTED_TOPIC = "fraud.detected";
 
     /**
      * SAGA STEP -1:Initiate request
@@ -151,6 +160,96 @@ public class TransactionServiceImpl implements TransactionService{
 
     @Override
     public TransactionResponse verifyOtp(String transactionId, String otp) {
-        return null;
+          log.info("Otp verfication for the transaction:{}",transactionId);
+          Transaction transaction = transactionRepository.findById(transactionId)
+                  .orElseThrow(()-> new RuntimeException("Transaction not found"));
+
+          String otpKey="verfication:otp"+transactionId;
+          String storeOtp=redisTemplate.opsForValue().get(otpKey).toString();
+
+
+          if(storeOtp==null){
+              log.warn("OTP expired or not found for transaction:{}",transactionId);
+              compenstateTransaction(transaction,"OTP expired - transaction cancelled and amount refunded");
+              return mapToResponse(transaction) ;
+          }
+
+          if(!storeOtp.equals(otp)){
+              log.warn("Wrong OTP - blocking account and refunding:{}",transactionId);
+              blockAccountAndCompesate(transaction,"Wrong OTP entered - transaction cancelled and amount refunded");
+              return mapToResponse(transaction);
+          }
+
+
+          log.info("OTP verfied - completing transaction:{}",transactionId);
+          redisTemplate.delete(otpKey);
+          completeTransaction(transaction);
+        return mapToResponse(transaction);
+    }
+
+
+    private void compenstateTransaction(Transaction transaction, String reason) {
+
+        log.info("SAGA COMPENSATION - refunding:{} amount:{}",transaction.getSenderAccountNumber(),
+                transaction.getAmount());
+
+        // CREDIT MONEY BACK TO SENDER SYNCHRONSOUSLY
+        accountServiceClient.creditBalance(
+                transaction.getSenderAccountNumber(),
+                transaction.getAmount());
+               transaction.setStatus(TransactionStatus.FLAGGED);
+               transaction.setFailureReason(reason+
+                       "-SAGA Compensation executed,amount refund at"+ LocalDateTime.now());
+               transactionRepository.save(transaction);
+
+               //PUBLISH EVENT TO NOTIFY OTHER SERVICES WILL ALERT USER
+            Map<String ,Object> refundEvent=new HashMap<>();
+            refundEvent.put("transactionId",transaction.getId());
+            refundEvent.put("senderAccountNumber",transaction.getSenderAccountNumber());
+            refundEvent.put("amount",transaction.getAmount());
+            refundEvent.put("reason",reason);
+            kafkaTemplate.send(TRANSACTION_REFUNDED_TOPIC,transaction.getId(),refundEvent);
+            log.info("SAGA COMPENSATION COMPLETE -{} refund to {}",transaction.getAmount(),transaction.getSenderAccountNumber());
+    }
+
+    private void blockAccountAndCompesate(Transaction transaction, String reson) {
+        //PUBLISH fraud.detected->Account Service will block  account
+        Map<String, Object> fraudEvent = new HashMap<>();
+        fraudEvent.put("accountNumber", transaction.getSenderAccountNumber());
+        fraudEvent.put("transactionId", transaction.getId());
+        fraudEvent.put("reason", reson);
+        kafkaTemplate.send(FRAUD_DETECTED_TOPIC, transaction.getId(), fraudEvent);
+        log.warn("fraud.detected published  -account will be blocked kindaly contact to bank",
+                transaction.getSenderAccountNumber());
+
+        //SAGA COMPENSATION -refund Sender
+        compenstateTransaction(transaction,reson);
+    }
+
+    private void completeTransaction(Transaction transaction) {
+        transaction.setStatus(TransactionStatus.COMPLETED);
+        transaction.setCompletedAt(LocalDateTime.now());
+        transactionRepository.save(transaction);
+
+        TransactionCompletedEvent transactionCompletedEvent = new TransactionCompletedEvent();
+        transactionCompletedEvent.setTransactionId(transaction.getId());
+        transactionCompletedEvent.setSenderAccountNumber(transaction.getSenderAccountNumber());
+        transactionCompletedEvent.setReceiverAccountNumber(transaction.getReceiverAccountNumber());
+        transactionCompletedEvent.setAmount(transaction.getAmount());
+        transactionCompletedEvent.setDescription(transaction.getDescription());
+
+        kafkaTemplate.send(TRANSACTION_COMPLETED_TOPIC, transaction.getId(), transactionCompletedEvent);
+
+        log.info("SAGA COMPLETE -Transaction{} completed", transaction.getId());
+    }
+    @Override
+    public void processCleanResult(String transactionId){
+        Transaction transaction = transactionRepository.findById(transactionId).orElseThrow(
+                () -> new RuntimeException("Transaction Not Found: " + transactionId));
+        if(transaction.getStatus() != TransactionStatus.PROCESSING){
+            log.warn("Transaction {} not PROCESSING -skipping",transactionId);
+            return;
+        }
+      compenstateTransaction(transaction,"Clean Result received");
     }
 }
