@@ -39,7 +39,6 @@ public class Transaction {
     private String description;
     private String failureReason;
     private String referenceNumber;
-    @CreationTimestamp
     private LocalDateTime createdDate;
     private LocalDateTime updatedDate;
     private LocalDateTime completedAt;
