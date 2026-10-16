@@ -3,9 +3,10 @@ package com.banking.account.service.service;
 import com.banking.account.service.dto.AccountResponse;
 import com.banking.account.service.dto.CreateAccountRequest;
 import jakarta.validation.Valid;
+import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
-
+@Service
 public interface AccountService {
     BigDecimal getBalance( String accountNumber);
 

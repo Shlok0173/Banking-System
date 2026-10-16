@@ -1,6 +1,8 @@
+
 spring:
   application:
-    name: Api-gateway
+    name: api-gateway
+
   data:
     redis:
       host: localhost
@@ -11,13 +13,11 @@ spring:
       server:
         webflux:
           routes:
-
-
             # Account Service Route
-              -id: account-service
-              uri:  http://localhost:8081
+            - id: account-service
+              uri: http://localhost:8081
               predicates:
-               - Path=/api/v1/account/**
+                - Path=/api/v1/account/**
               filters:
                 - name: RequestRateLimiter
                   args:
@@ -27,12 +27,11 @@ spring:
                   args:
                     parts: 3
 
-
-           #Transaction Service Route
-              -id: transaction-service
-              uri:  http://localhost:8082
+            # Transaction Service Route
+            - id: transaction-service
+              uri: http://localhost:8082
               predicates:
-               - Path=/api/v1/transaction/**
+                - Path=/api/v1/transaction/**
               filters:
                 - name: RequestRateLimiter
                   args:
@@ -42,19 +41,19 @@ spring:
                   args:
                     parts: 3
 
-
-
-           #Payment service routes
-
-              -id: payment-service
-              uri:  http://localhost:8083
+            # Payment Service Route
+            - id: payment-service
+              uri: http://localhost:8083
               predicates:
-               -Path= /api/v1/payment/**
+                - Path=/api/v1/payment/**
               filters:
-                  - name: RequestRateLimiter
-                    args:
-                        redis-rate-limiter.replenishRate: 10
-                        redis-rate-limiter.burstCapacity: 20
+                - name: RequestRateLimiter
+                  args:
+                    redis-rate-limiter.replenishRate: 10
+                    redis-rate-limiter.burstCapacity: 20
+                - name: StripPrefix
+                  args:
+                    parts: 3
 
 server:
   port: 8080
@@ -63,5 +62,4 @@ management:
   endpoints:
     web:
       exposure:
-        include:
-          - health,info,gateway
+        include: health,info,gateway

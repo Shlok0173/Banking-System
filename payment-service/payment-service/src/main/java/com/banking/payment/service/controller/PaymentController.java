@@ -14,7 +14,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.Map;
 
-@RestController("/api/v1")
+@RestController("/api/v1/payments")
 @RequiredArgsConstructor
 @Slf4j
 public class PaymentController {
@@ -22,7 +22,7 @@ public class PaymentController {
 
     private final PaymentService paymentService;
 
-    @PostMapping("/payments")
+    @PostMapping("/create-order")
     public ResponseEntity<PaymentOrderResponse> createPayment(@Valid @RequestBody CreatePaymentRequest request) throws RazorpayException {
         log.info("Received request to create payment");
         PaymentOrderResponse servicePaymentOrder = paymentService.createPaymentOrder(request);
@@ -35,7 +35,7 @@ public class PaymentController {
     }
 
     @GetMapping("/payments/{paymentId}")
-    public ResponseEntity<Payment> getPaymentById(@PathVariable String paymentId) {
+    public ResponseEntity<Payment> getPaymentById(@PathVariable String paymentId) throws RazorpayException {
         log.info("Received request to get payment by id: {}", paymentId);
         Payment servicePaymentOrder = paymentService.getPaymentByPaymentId(paymentId);
         log.info(

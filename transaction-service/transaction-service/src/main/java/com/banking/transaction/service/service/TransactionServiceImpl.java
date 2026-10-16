@@ -141,7 +141,7 @@ public class TransactionServiceImpl implements TransactionService{
         }
 
         List<Transaction> transactions =
-                transactionRepository.findBySenderAccountNumberOrderByCreatedAtDesc(accountNumber);
+                transactionRepository.findBySenderAccountNumberOrderByCreatedDateDesc(accountNumber);
 
         if (transactions.isEmpty()) {
             log.info("No transactions found for account={}", accountNumber);
